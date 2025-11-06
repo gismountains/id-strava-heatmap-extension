@@ -1,4 +1,6 @@
 const fs = require('fs');
+const fsExtra = require('fs-extra'); 
+const archiver = require('archiver'); 
 const path = require('path');
 const { program } = require('commander');
 const { execSync } = require('child_process');
@@ -9,24 +11,60 @@ const FOLDERS = ['icons', 'lib', 'src'];
 
 // Function to copy shared files
 function copySharedFiles() {
-  const folders = FOLDERS.map((folder) => path.join('..', folder)).join(' ');
-  execSync(`cd ${DIST} && cp -r ${folders} .`, { stdio: 'ignore' });
+  FOLDERS.forEach((folder) => {
+    const source = path.join('.', folder);
+    const destination = path.join(DIST, folder);
+    console.log(`Copying ${source} to ${destination}`);
+    fsExtra.copySync(source, destination);
+  });
 }
 
 // Function to create a zip file
 function createZip(zipFileName, manifest) {
   fs.writeFileSync(path.join(DIST, MANIFEST), JSON.stringify(manifest, null, 2));
 
-  const folders = FOLDERS.map((folder) => path.join(folder, '*')).join(' ');
-  execSync(`cd ${DIST} && zip -r ${zipFileName} ${MANIFEST} ${folders}`, {
-    stdio: 'ignore',
+  const output = fs.createWriteStream(path.join(DIST, zipFileName));
+  const archive = archiver('zip', { zlib: { level: 9 } });
+
+  output.on('close', () => {
+    console.log(`${zipFileName} created successfully! (${archive.pointer()} total bytes)`);
   });
+
+  archive.on('error', (err) => {
+    throw err;
+  });
+
+  archive.pipe(output);
+
+  // Add manifest file
+  archive.file(path.join(DIST, MANIFEST), { name: MANIFEST });
+
+  // Add folders
+  FOLDERS.forEach((folder) => {
+    const folderPath = path.join(DIST, folder);
+    if (fs.existsSync(folderPath)) {
+      archive.directory(folderPath, folder);
+    } else {
+      console.warn(`Warning: Folder "${folder}" does not exist. Skipping.`);
+    }
+  });
+
+  archive.finalize();
 }
 
 // Function to clean up the dist folder
 function cleanUp() {
-  const folders = FOLDERS.map((folder) => path.join(DIST, folder)).join(' ');
-  execSync(`cd ${DIST} && rm -rf ${MANIFEST} ${folders}`, { stdio: 'ignore' });
+  const filesToDelete = [path.join(DIST, MANIFEST)];
+  const foldersToDelete = FOLDERS.map((folder) => path.join(DIST, folder));
+
+  [...filesToDelete, ...foldersToDelete].forEach((item) => {
+    if (fs.existsSync(item)) {
+      fsExtra.removeSync(item); // Use fs-extra to remove files and directories
+      console.log(`Deleted: ${item}`);
+    } else {
+      console.warn(`Warning: ${item} does not exist. Skipping.`);
+    }
+  });
 }
 
 // Read the original manifest file
